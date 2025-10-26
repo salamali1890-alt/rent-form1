@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>فورمة التاجير — تاريخ/وقت تلقائي (توقيت بغداد)</title>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <style>
+    :root { --bg:#0b1020; --card:#121a33; --text:#e9eefb; --muted:#aab4d6; --accent:#8ab4ff; --ok:#70d28f; --bad:#ef767a; }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto}
+    header{padding:14px 18px;border-bottom:1px solid #1f2a52;position:sticky;top:0;background:#0b1020eb;backdrop-filter:blur(6px);z-index:9}
+    h1{margin:0;font-size:18px}
+    .container{max-width:1100px;margin:0 auto;padding:16px}
+    .card{background:var(--card);border:1px solid #202a4e;border-radius:16px;box-shadow:0 10px 25px rgba(0,0,0,.25);padding:14px}
+    label{font-size:12px;color:var(--muted);margin-bottom:6px;display:block}
+    input,button{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #2a366b;background:#0e1631;color:var(--text);outline:none}
+    input[readonly], input:disabled{opacity:0.9; cursor:not-allowed; background:#0f1835}
+    button{cursor:pointer;background:linear-gradient(180deg,#1a2a74,#13215a);border:1px solid #31428a}
+    button:hover{filter:brightness(1.05)}
+    .grid{display:grid;gap:10px}
+    .form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    table{width:100%;border-collapse:separate;border-spacing:0 8px;margin-top:10px}
+    thead th{background:#0e1631;padding:8px;border-bottom:1px solid #2a366b;font-size:12px;color:var(--muted)}
+    tbody td{background:#0f1835;border:1px solid #26336b;border-left:none;border-right:none;padding:8px;font-size:13px}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .pill{display:inline-flex;gap:8px;align-items:center;background:#0f1a39;border:1px solid #2a366b;border-radius:999px;padding:6px 10px;font-size:12px;color:#aab4d6}
+    .hl{color:var(--accent)}
+    .warn{background:#331a1a;border:1px solid #5a3333;color:#ffb4b4;padding:8px 10px;border-radius:10px;font-size:12px;display:none}
+    .ok{background:#1c3125;border:1px solid #315e41;color:#a7f5bd;padding:8px 10px;border-radius:10px;font-size:12px;display:none}
+    .note{font-size:12px;color:#aab4d6}
+    .kbd{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0f1a39;border:1px solid #2a366b;border-radius:6px;padding:2px 6px}
+    .geo-btn{position:absolute;right:8px;top:26px;font-size:11px;padding:4px 8px;border-radius:8px;background:#162a5a;color:#aab4d6;cursor:pointer;border:1px solid #304c8a}
+  </style>
+</head>
+<body>
+  <header><h1>فورمة التاجير — تاريخ/وقت تلقائي (توقيت بغداد)</h1></header>
+  <div class="container">
+    <div class="card grid">
+      <div id="msgOk" class="ok"></div>
+      <div id="msgWarn" class="warn"></div>
+
+      <div class="note">حقل <b>التاريخ</b> يُملأ تلقائيًا بتوقيت <b>Asia/Baghdad</b> ويظهر للعرض فقط.</div>
+      <div class="note">اختصارات: <span class="kbd">Enter</span> = إضافة صف، <span class="kbd">Ctrl + S</span> = تصدير</div>
+
+      <div id="formArea" class="grid" style="display:none">
+        <div class="form-grid" id="dynForm"></div>
+        <div class="row" style="justify-content:flex-end;gap:8px">
+          <button id="btnRefreshTime" title="تحديث التاريخ الآن">تحديث التاريخ الآن</button>
+          <button id="btnAdd">إضافة صف</button>
+          <button id="btnExport">تصدير Excel</button>
+          <button id="btnClear">تفريغ القائمة</button>
+        </div>
+
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <span class="pill">الأعمدة: <span id="hdrCount" class="hl">0</span></span>
+            <span class="pill">صفوف مدخلة: <span id="rowCount" class="hl">0</span></span>
+            <span class="pill">الورقة: <span id="sheetName" class="hl"></span></span>
+          </div>
+          <table>
+            <thead><tr id="thead"></tr></thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ===== إعدادات عامة =====
+const STORAGE_KEY = 'rentform_rows_v2';
+const TZ = 'Asia/Baghdad';
+const DATE_FIELD_VARIANTS = ['التاريخ','Date','date'];
+const LOCATION_FIELD = 'الموقع';
+const DEFAULT_FILE_NAME = 'فورمة_التاجير_معبأة.xlsx';
+
+// ===== تضمين قالب Excel (Base64) — نفس القالب الأصلي =====
+const EMBED_B64 = "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";
+
+// ===== أدوات مساعدة للعمل مع القالب =====
+function b64ToArrayBuffer(b64){ const bin=atob(b64); const len=bin.length; const bytes=new Uint8Array(len); for(let i=0;i<len;i++) bytes[i]=bin.charCodeAt(i); return bytes.buffer; }
+function cellText(cell){ if(!cell) return ''; let v=cell.value; if(!v && cell.master) v=cell.master.value; if(v && typeof v==='object'){ if(Array.isArray(v.richText)) return v.richText.map(p=>p.text).join(''); if(v.text) return v.text; if(v.result) return String(v.result);} return (v==null)?'':String(v); }
+function detectHeadersRow(ws){ for(let r=1;r<=5;r++){ const row=ws.getRow(r); const tmp=[]; row.eachCell({includeEmpty:true},(cell,col)=>{ const t=cellText(cell).trim(); if(t) tmp.push({title:t,col});}); if(tmp.length>=2) return {row:r, headers:tmp}; } const row=ws.getRow(1); const tmp=[]; row.eachCell({includeEmpty:true},(cell,col)=>{ const t=cellText(cell).trim(); if(t) tmp.push({title:t,col});}); return {row:1, headers:tmp}; }
+
+// ===== توابع الواجهة =====
+function nowBaghdad(){ const now=new Date(); return new Intl.DateTimeFormat('en-CA',{ timeZone:TZ, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false }).format(now).replace(',',''); }
+
+const PREVIEW_HEADERS = [ { title:'التاريخ' }, { title:'اسم المستأجر' }, { title:'المبلغ' }, { title:'رقم العقد' }, { title:'الموقع' }, { title:'ملاحظات' } ];
+let headers=[...PREVIEW_HEADERS]; let rows=[];
+
+const dynForm=document.getElementById('dynForm');
+const thead=document.getElementById('thead');
+const tbody=document.getElementById('tbody');
+const msgOk=document.getElementById('msgOk');
+const msgWarn=document.getElementById('msgWarn');
+const rowCountEl=document.getElementById('rowCount');
+const hdrCountEl=document.getElementById('hdrCount');
+const sheetNameEl=document.getElementById('sheetName');
+const formArea=document.getElementById('formArea');
+
+function ok(m){ msgOk.textContent=m; msgOk.style.display='block'; msgWarn.style.display='none'; clearMsgLater(); }
+function warn(m){ msgWarn.textContent=m; msgWarn.style.display='block'; msgOk.style.display='none'; clearMsgLater(); }
+function clearMsgLater(){ setTimeout(()=>{ msgOk.style.display='none'; msgWarn.style.display='none'; }, 2500); }
+
+function saveLocal(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); }
+function loadLocal(){ try{ rows = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]'); }catch{ rows=[]; } }
+
+function buildUI(){
+  dynForm.innerHTML='';
+  headers.forEach(h=>{
+    const isDate = DATE_FIELD_VARIANTS.includes(h.title);
+    const wrap = document.createElement('div');
+    wrap.style.position='relative';
+    const initVal = isDate ? nowBaghdad() : '';
+    wrap.innerHTML = `<label>${h.title}${isDate?' (أوتوماتيكي)':''}</label>
+      <input type="text" data-key="${h.title}" value="${initVal}" ${isDate?'readonly disabled':''} placeholder="${h.title}">`;
+    if(h.title===LOCATION_FIELD){
+      const geoBtn=document.createElement('button');
+      geoBtn.className='geo-btn';
+      geoBtn.textContent='📍';
+      geoBtn.title='التقاط الإحداثيات عبر GPS';
+      geoBtn.onclick=()=>{
+        if(!('geolocation' in navigator)) return warn('جهازك لا يدعم تحديد الموقع (Geolocation).');
+        if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
+          return warn('المتصفحات تمنع الموقع بدون HTTPS. افتح الصفحة عبر https أو على localhost.');
+        }
+        if(navigator.permissions && navigator.permissions.query){
+          navigator.permissions.query({name:'geolocation'}).then(p=>{ if(p.state==='denied'){ warn('تم رفض إذن الموقع من المتصفح. فعّل الإذن من الإعدادات ثم جرّب مرة أخرى.'); } }).catch(()=>{});
+        }
+        ok('جاري التقاط الموقع...');
+        navigator.geolocation.getCurrentPosition((pos)=>{
+          const {latitude,longitude,accuracy}=pos.coords;
+          const field=dynForm.querySelector(`[data-key='${LOCATION_FIELD}']`);
+          if(field) field.value=`${latitude.toFixed(6)}, ${longitude.toFixed(6)} (±${Math.round(accuracy)}m)`;
+          ok('تم التقاط الموقع بنجاح');
+        },(err)=>{
+          const msg = {1:'تم رفض الإذن بالموقع.',2:'تعذر تحديد الموقع (إشارة ضعيفة أو GPS مغلق).',3:'انتهت مهلة تحديد الموقع.'}[err.code]||'تعذر التقاط الإحداثيات.';
+          warn(msg + ' — جرّب: تشغيل GPS/الواي فاي، الوقوف قرب نافذة، وإعادة المحاولة.');
+        }, {enableHighAccuracy:true, timeout:15000, maximumAge:0});
+      };
+      wrap.appendChild(geoBtn);
+    }
+    dynForm.appendChild(wrap);
+  });
+  thead.innerHTML=''; headers.forEach(h=>{ const th=document.createElement('th'); th.textContent=h.title; thead.appendChild(th); });
+  hdrCountEl.textContent=headers.length;
+  // زر تحديث التاريخ
+  const btnRefresh = document.getElementById('btnRefreshTime');
+  if(btnRefresh){ btnRefresh.onclick=()=>{ const inp = dynForm.querySelector(`[data-key='التاريخ']`); if(inp){ inp.value = nowBaghdad(); ok('تم تحديث التاريخ.'); } }; }
+}
+
+function collect(){ const obj={}; headers.forEach(h=>{ const inp=dynForm.querySelector(`[data-key='${h.title}']`); obj[h.title]= inp? inp.value : ''; }); return obj; }
+function isEmpty(obj){ return headers.every(h=> (DATE_FIELD_VARIANTS.includes(h.title) ? true : !(obj[h.title]||'').trim())); }
+
+function appendPreviewRow(obj){ const tr=document.createElement('tr'); headers.forEach(h=>{ const td=document.createElement('td'); td.textContent=obj[h.title]||''; tr.appendChild(td); }); tbody.appendChild(tr); }
+function refreshTable(){ tbody.innerHTML=''; rows.forEach(appendPreviewRow); rowCountEl.textContent=rows.length; }
+
+function onAdd(){ const obj=collect(); if(isEmpty(obj)) return warn('الصف فارغ'); if(!obj['التاريخ']) obj['التاريخ']=nowBaghdad(); rows.push(obj); saveLocal(); refreshTable(); ok('تمت الإضافة'); }
+function onClear(){ rows=[]; saveLocal(); refreshTable(); warn('تم التفريغ'); }
+
+// ===== التصدير إلى Excel باستخدام القالب =====
+function isIOSSafari(){
+  const ua = navigator.userAgent;
+  const iOS = /iP(hone|od|ad)/.test(ua);
+  const webkit = /WebKit/i.test(ua);
+  const isCriOS = /CriOS/i.test(ua);
+  const isFxiOS = /FxiOS/i.test(ua);
+  return iOS && webkit && !isCriOS && !isFxiOS;
+}
+async function downloadBlob(blob, filename){
+  // يدعم iOS Safari بفتح DataURL بدل Blob مباشرة
+  if(isIOSSafari()){
+    const reader = new FileReader();
+    const url = await new Promise((res,rej)=>{ reader.onerror=rej; reader.onload=()=>res(reader.result); reader.readAsDataURL(blob); });
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1500);
+}
+async function onExport(){
+  if(rows.length===0){ return warn('أضف صفًا واحدًا على الأقل قبل التصدير.'); }
+  try{
+    if(typeof ExcelJS === 'undefined' || !ExcelJS){
+      return warn('لم يتم تحميل ExcelJS. تأكد من اتصال الإنترنت ثم أعد المحاولة.');
+    }
+    const fresh = new ExcelJS.Workbook();
+    await fresh.xlsx.load(b64ToArrayBuffer(EMBED_B64));
+    const ws = fresh.worksheets[0];
+    sheetNameEl.textContent = ws.name;
+
+    const det = detectHeadersRow(ws);
+    const hdrs = det.headers;
+
+    let locationHeader = hdrs.find(h=>h.title.trim()===LOCATION_FIELD);
+    if(!locationHeader){
+      const headerRow = ws.getRow(det.row);
+      const lastCol = hdrs.reduce((m,h)=>Math.max(m,h.col),0)+1;
+      headerRow.getCell(lastCol).value = LOCATION_FIELD;
+      headerRow.commit();
+      hdrs.push({title:LOCATION_FIELD, col:lastCol});
+    }
+
+    const startRow = det.row + 1;
+    for(let i=0;i<rows.length;i++){
+      const excelRow = ws.getRow(startRow + i);
+      hdrs.forEach(h=>{
+        let val = rows[i][h.title];
+        if(DATE_FIELD_VARIANTS.includes(h.title) && (!val || String(val).trim()==='')){ val = nowBaghdad(); }
+        excelRow.getCell(h.col).value = String(val ?? '');
+      });
+      excelRow.commit();
+    }
+
+    const buf = await fresh.xlsx.writeBuffer();
+    const blob = new Blob([buf], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    await downloadBlob(blob, DEFAULT_FILE_NAME);
+    ok('تم التصدير بنجاح.');
+  }catch(e){
+    console.error(e);
+    const s = String(e||'');
+    if(s.includes('Content Security Policy')){
+      return warn('منع المتصفح التحميل بسبب سياسة الأمان (CSP). افتح الصفحة مباشرة من ملف محلي أو دومين بدون قيود CSP.');
+    }
+    if(s.includes('NetworkError') || s.includes('Failed to fetch')){
+      return warn('تعذر إنشاء الملف بسبب اتصال ضعيف. تحقق من الإنترنت ثم أعد التصدير.');
+    }
+    warn('حدث خطأ أثناء التصدير — جرّب Chrome/Edge الأحدث أو Safari iOS 15+ وافتح الصفحة عبر HTTPS.');
+  }
+}
+
+window.addEventListener('DOMContentLoaded',()=>{
+  buildUI(); loadLocal(); refreshTable(); sheetNameEl.textContent='Ready'; formArea.style.display='';
+  document.getElementById('btnAdd').onclick=onAdd;
+  document.getElementById('btnClear').onclick=onClear;
+  document.getElementById('btnExport').onclick=onExport;
+});
+</script>
+</body>
+</html>
