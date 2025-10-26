@@ -55,6 +55,15 @@
 
   .thumb{display:inline-block;border:1px solid var(--border);border-radius:10px;overflow:hidden}
   .thumb img{display:block;max-width:70px;max-height:50px}
+
+  /* معاينة الكاميرا (مودال خفيف) */
+  .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:50}
+  .modal.show{display:flex}
+  .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(2px)}
+  .modal-card{position:relative;background:#0f1839;border:1px solid #243165;border-radius:16px;padding:12px;z-index:51;width:min(92vw,520px)}
+  .modal video{width:100%;border-radius:12px;background:#000}
+  .modal .actions{display:flex;gap:8px;justify-content:space-between;margin-top:10px}
+  .modal .actions button{width:auto}
   </style>
 </head>
 <body>
@@ -91,6 +100,21 @@
     </div>
   </div>
 
+  <!-- مودال معاينة الكاميرا -->
+  <div id="cameraModal" class="modal" aria-hidden="true">
+    <div class="backdrop"></div>
+    <div class="modal-card">
+      <video id="camPreview" playsinline muted autoplay></video>
+      <div class="actions">
+        <button id="btnCloseCam">إلغاء</button>
+        <div style="display:flex;gap:8px">
+          <button id="btnFlipCam" title="تبديل الكاميرا">تبديل الكاميرا</button>
+          <button id="btnSnap">التقاط</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>
 const STORAGE_KEY = 'rentform_rows_v3';
 const TZ = 'Asia/Baghdad';
@@ -113,6 +137,14 @@ const rowCountEl=document.getElementById('rowCount');
 const hdrCountEl=document.getElementById('hdrCount');
 const sheetNameEl=document.getElementById('sheetName');
 const formArea=document.getElementById('formArea');
+
+// عناصر المودال
+const cameraModal = document.getElementById('cameraModal');
+const camVideo = document.getElementById('camPreview');
+const btnCloseCam = document.getElementById('btnCloseCam');
+const btnSnap = document.getElementById('btnSnap');
+const btnFlipCam = document.getElementById('btnFlipCam');
+let camStream = null; let useFacing = 'environment'; let targetPhotoInput = null;
 
 function ok(m){ msgOk.textContent=m; msgOk.style.display='block'; msgWarn.style.display='none'; setTimeout(()=>{ msgOk.style.display='none'; },2500); }
 function warn(m){ msgWarn.textContent=m; msgWarn.style.display='block'; msgOk.style.display='none'; setTimeout(()=>{ msgWarn.style.display='none'; },3500); }
@@ -145,22 +177,31 @@ function compressImageToDataURL(file, maxSide=1024, quality=0.8){
   });
 }
 
-async function captureFromCamera(){
-  // يعمل على HTTPS أو localhost فقط
+async function openCamera(){
   if(location.protocol!=='https:' && location.hostname!=='localhost'){
     throw new Error('يتطلب فتح الكاميرا عبر HTTPS أو localhost');
   }
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-  const video = document.createElement('video');
-  video.srcObject = stream; await video.play();
-  await new Promise(r=> video.onloadedmetadata = r);
-  const canvas=document.createElement('canvas');
-  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-  const ctx=canvas.getContext('2d'); ctx.drawImage(video,0,0);
-  const dataURL = canvas.toDataURL('image/jpeg', 0.85);
-  stream.getTracks().forEach(t=>t.stop());
-  return dataURL;
+  camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: useFacing } }, audio:false });
+  camVideo.srcObject = camStream; camVideo.play();
+  cameraModal.classList.add('show');
 }
+function closeCamera(){
+  if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; }
+  camVideo.srcObject=null; cameraModal.classList.remove('show');
+}
+btnCloseCam.onclick = ()=>{ closeCamera(); targetPhotoInput=null; };
+btnFlipCam.onclick = async ()=>{ useFacing = (useFacing==='environment'?'user':'environment'); if(camStream){ closeCamera(); try{ await openCamera(); }catch(e){ warn('تعذر تبديل الكاميرا'); } } };
+btnSnap.onclick = ()=>{
+  try{
+    const w = camVideo.videoWidth || 1280;
+    const h = camVideo.videoHeight || 720;
+    const canvas = document.createElement('canvas'); canvas.width=w; canvas.height=h;
+    const ctx = canvas.getContext('2d'); ctx.drawImage(camVideo,0,0,w,h);
+    const dataURL = canvas.toDataURL('image/jpeg', 0.9);
+    if(targetPhotoInput){ targetPhotoInput.value = dataURL; ok('تم التقاط الصورة'); }
+  }catch(e){ warn('تعذر التقاط الإطار'); }
+  finally{ closeCamera(); }
+};
 
 function buildUI(){
   dynForm.innerHTML='';
@@ -173,21 +214,14 @@ function buildUI(){
     if(h.title===PHOTO_FIELD){
       wrap.innerHTML = `<label>${h.title}</label>
         <input type="text" data-key="${h.title}" value="" placeholder="التقط صورة" readonly>
-        <button class="cam-btn" title="التقاط صورة بالكاميرا" type="button">📸</button>
+        <button class="cam-btn" title="تشغيل الكاميرا" type="button">📸</button>
         <input type="file" accept="image/*" capture="environment" style="display:none">`;
       const camBtn = wrap.querySelector('.cam-btn');
       const fileInput = wrap.querySelector('input[type="file"]');
       camBtn.onclick = async ()=>{
-        try{
-          const dataURL = await captureFromCamera();
-          const inp = wrap.querySelector(`[data-key='${PHOTO_FIELD}']`);
-          if(inp) inp.value = dataURL;
-          ok('تم التقاط الصورة من الكاميرا');
-        }catch(e){
-          // في حال فشل getUserMedia (مثلاً بدون HTTPS) نرجع للمعرض/الكاميرا عبر input
-          console.warn('camera capture failed, fallback to file input', e);
-          fileInput.click();
-        }
+        targetPhotoInput = wrap.querySelector(`[data-key='${PHOTO_FIELD}']`);
+        try{ await openCamera(); }
+        catch(e){ console.warn('camera error, fallback to file input', e); fileInput.click(); }
       };
       fileInput.onchange = async (e)=>{
         const file=e.target.files&&e.target.files[0]; if(!file) return;
